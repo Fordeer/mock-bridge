@@ -397,10 +397,11 @@ export class MockShopifyAdminServer {
    */
   private handleMockRestApi(req: Request, res: Response, url: string, method: string): void {
     // Parse the URL to determine the resource
-    const urlParts = url.split('/');
-    const resource = urlParts.find((part, i) =>
-      urlParts[i - 1]?.match(/^\d{4}-\d{2}$/) // Find part after API version
-    );
+    const urlParts = url.split('/').filter(Boolean)
+    const versionIndex = urlParts.findIndex(part =>
+      /^\d{4}-\d{2}$/.test(part) || part === 'unstable' || part === 'latest',
+    )
+    const resource = versionIndex >= 0 ? urlParts[versionIndex + 1] : undefined
 
     switch (resource) {
       case 'shop.json':
@@ -458,6 +459,19 @@ export class MockShopifyAdminServer {
               last_name: 'Doe',
               orders_count: 5,
               total_spent: '249.95',
+            },
+          ],
+        });
+        break;
+
+      case 'themes.json':
+      case 'themes':
+        res.json({
+          themes: [
+            {
+              id: 123456789,
+              name: 'Dawn',
+              role: 'main',
             },
           ],
         });
