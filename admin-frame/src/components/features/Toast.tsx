@@ -39,6 +39,7 @@ export function Toast() {
   if (toasts.length === 0) return null;
 
   return (
+    <div className="mock-toast-layer">
     <div className="mock-toasts">
       {toasts.map(toast => (
         <div
@@ -62,6 +63,7 @@ export function Toast() {
           )}
         </div>
       ))}
+    </div>
     </div>
   );
 }

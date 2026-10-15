@@ -12,6 +12,8 @@ export declare class MockShopifyAdminServer {
     /**
      * Handle mock GraphQL Admin API requests
      */
+    private isLiveAdminApi;
+    private forwardToShopify;
     private handleMockGraphQL;
     private mockUploadGraphql;
     /**

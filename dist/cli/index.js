@@ -148,6 +148,16 @@ async function startCommand(options) {
             ...(options.debug && { debug: options.debug }),
             ...(options.proxy && { proxy: options.proxy }),
         };
+        // Live shop mode: offline Admin API token from env only (CLI args show up
+        // in `ps`). Admin API calls then go to the real --shop instead of mock data.
+        const liveAccessToken = process.env.MOCK_BRIDGE_ADMIN_ACCESS_TOKEN?.trim();
+        if (liveAccessToken) {
+            if (!options.shop) {
+                console.error(chalk_1.default.red('❌ MOCK_BRIDGE_ADMIN_ACCESS_TOKEN requires --shop <store>.myshopify.com'));
+                process.exit(1);
+            }
+            finalConfig.adminApi = { accessToken: liveAccessToken };
+        }
         // Validate configuration
         validateConfig(finalConfig);
         // Show warning if using default client ID

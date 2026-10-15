@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { appRouteFromAdminUrl } from "../lib/appRoute";
+import { handleLegacyAction, isLegacyDispatch, isLegacyGetState } from "../lib/legacyAppBridge";
 import { useConfig } from "./useConfig";
 import { useAppRouteSync } from "./useAppRouteSync";
 import { getFeatureStore, type FeatureActionName, type FeatureActionPayload, type FeatureName } from "../store/features";
@@ -76,6 +77,22 @@ export function useMockBridge() {
       // Main app iframe and src-modal iframes both talk to the admin;
       // reply to the frame that asked, otherwise modal requests never resolve.
       const replyTarget = (event.source as Window | null) ?? iframeRef.current?.contentWindow ?? null;
+
+      // App Bridge v3 (@shopify/app-bridge/actions): Redirect, Toast, Loading,
+      // SessionToken… replies use the v3 envelope on the sender frame.
+      if (isLegacyDispatch(event.data)) {
+        handleLegacyAction(event.data.payload, {
+          clientId: config.clientId,
+          shop: config.shop,
+          reply: message => replyTarget?.postMessage(message, '*'),
+          getSessionToken,
+        });
+        return;
+      }
+      if (isLegacyGetState(event.data)) {
+        replyTarget?.postMessage({ type: 'getState', payload: {} }, '*');
+        return;
+      }
 
       // Handle App Bridge messages from the embedded app
       if (event.data && event.data.type) {

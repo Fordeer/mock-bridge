@@ -1,34 +1,44 @@
 import { MockShopifyAdminServer } from ".";
+import { MockShopifyAdminConfig } from "../types";
 
+// Only SHOPIFY_APP_URL is required. Everything else falls back to the
+// MockShopifyAdminServer defaults (see .env.example).
 const APP_URL = process.env.SHOPIFY_APP_URL;
-if (!APP_URL) throw new Error('SHOPIFY_APP_URL is not set');
+if (!APP_URL) throw new Error('SHOPIFY_APP_URL is not set (copy .env.example to .env)');
 
-const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
-if (!CLIENT_ID) throw new Error('SHOPIFY_CLIENT_ID is not set');
+const env = (name: string) => process.env[name]?.trim() || undefined;
 
-const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-if (!CLIENT_SECRET) throw new Error('SHOPIFY_CLIENT_SECRET is not set');
+const config: MockShopifyAdminConfig = { appUrl: APP_URL };
 
-const SHOP = process.env.SHOPIFY_SHOP;
-if (!SHOP) throw new Error('SHOPIFY_SHOP is not set');
+const CLIENT_ID = env('SHOPIFY_CLIENT_ID');
+if (CLIENT_ID) config.clientId = CLIENT_ID;
 
-const PORT = process.env.SHOPIFY_PORT;
-if (!PORT) throw new Error('SHOPIFY_PORT is not set');
+const CLIENT_SECRET = env('SHOPIFY_CLIENT_SECRET');
+if (CLIENT_SECRET) config.clientSecret = CLIENT_SECRET;
 
-const DEBUG = process.env.SHOPIFY_DEBUG;
-if (!DEBUG) throw new Error('SHOPIFY_DEBUG is not set');
+const SHOP = env('SHOPIFY_SHOP');
+if (SHOP) config.shop = SHOP;
 
-const MOCK_USER_ID = process.env.MOCK_USER_ID;
-if (!MOCK_USER_ID) throw new Error('MOCK_USER_ID is not set');
+const MOCK_USER_ID = env('MOCK_USER_ID');
+if (MOCK_USER_ID) config.userId = MOCK_USER_ID;
 
-const server = new MockShopifyAdminServer({
-  appUrl: APP_URL,
-  clientId: CLIENT_ID,
-  clientSecret: CLIENT_SECRET,
-  userId: MOCK_USER_ID,
-  shop: SHOP,
-  port: Number(PORT),
-  debug: DEBUG === 'true',
-});
+const PORT = env('SHOPIFY_PORT');
+if (PORT) {
+  const port = Number(PORT);
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`SHOPIFY_PORT is invalid: ${PORT}`);
+  config.port = port;
+}
+
+const DEBUG = env('SHOPIFY_DEBUG');
+if (DEBUG) config.debug = DEBUG === 'true';
+
+// Live shop mode: proxy Admin API calls to the real SHOPIFY_SHOP.
+const ADMIN_ACCESS_TOKEN = env('MOCK_BRIDGE_ADMIN_ACCESS_TOKEN');
+if (ADMIN_ACCESS_TOKEN) {
+  if (!SHOP) throw new Error('MOCK_BRIDGE_ADMIN_ACCESS_TOKEN requires SHOPIFY_SHOP');
+  config.adminApi = { accessToken: ADMIN_ACCESS_TOKEN };
+}
+
+const server = new MockShopifyAdminServer(config);
 
 server.start();

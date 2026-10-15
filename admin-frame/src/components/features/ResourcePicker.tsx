@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   listPickerResources,
   resolveSelection,
@@ -8,6 +8,8 @@ import {
 } from "../../lib/mockCatalog";
 import { postToEmbeddedApp } from "../../lib/embeddedFrame";
 import { useResourcePickerStore } from "../../store/features/resource-picker";
+import { useConfig } from "../../hooks/useConfig";
+import { fetchLiveResources, liveItems, type LivePickerResult } from "../../lib/liveCatalog";
 
 function resourceThumb(item: MockProduct | MockCollection | { image?: { originalSrc: string } | null; displayName?: string; title?: string }) {
   if ('images' in item && item.images?.[0]?.originalSrc) return item.images[0].originalSrc;
@@ -77,13 +79,49 @@ export function ResourcePicker() {
     return () => window.removeEventListener('message', onMessage);
   }, [openPicker]);
 
+  const config = useConfig();
+  const live = Boolean(config?.liveAdminApi);
+  const [liveResult, setLiveResult] = useState<LivePickerResult>({ products: [], collections: [] });
+  const [liveState, setLiveState] = useState<'idle' | 'loading' | 'error'>('idle');
+  // Every live item seen while the picker is open: selections can span searches.
+  const seenLive = useRef(new Map<string, unknown>());
+
+  useEffect(() => {
+    if (!open) seenLive.current.clear();
+  }, [open]);
+
+  useEffect(() => {
+    if (!live || !open || !options) return;
+    let cancelled = false;
+    setLiveState('loading');
+    const timer = window.setTimeout(() => {
+      fetchLiveResources(options, search)
+        .then(result => {
+          if (cancelled) return;
+          for (const item of liveItems(options, result)) seenLive.current.set(String((item as { id: string }).id), item);
+          setLiveResult(result);
+          setLiveState('idle');
+        })
+        .catch(error => {
+          if (cancelled) return;
+          console.warn('[MockAdmin] live resource picker failed', error);
+          setLiveState('error');
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [live, open, options, search]);
+
   const items = useMemo(() => {
     if (!options) return [];
+    if (live) return liveItems(options, liveResult);
     return listPickerResources({
       ...options,
       query: search,
     });
-  }, [options, search]);
+  }, [options, search, live, liveResult]);
 
   if (!open || !options) return null;
 
@@ -97,7 +135,9 @@ export function ResourcePicker() {
   };
 
   const confirm = () => {
-    finish(resolveSelection(options, selectedIds));
+    finish(live
+      ? selectedIds.map(id => seenLive.current.get(id)).filter(Boolean)
+      : resolveSelection(options, selectedIds));
   };
 
   const cancel = () => finish(undefined);
@@ -132,7 +172,11 @@ export function ResourcePicker() {
         </div>
 
         <div className="resource-picker-body">
-          {items.length === 0 ? (
+          {live && liveState === 'loading' && items.length === 0 ? (
+            <p className="resource-picker-empty">Loading {options.type}s from the store…</p>
+          ) : live && liveState === 'error' ? (
+            <p className="resource-picker-empty">Could not load {options.type}s from the store (see console)</p>
+          ) : items.length === 0 ? (
             <p className="resource-picker-empty">No {options.type}s found</p>
           ) : (
             <ul className="resource-picker-list">

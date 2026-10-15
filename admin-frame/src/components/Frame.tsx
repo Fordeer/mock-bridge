@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { SaveBar } from "./features/SaveBar";
-import { Toast } from "./features/Toast";
 import { useConfig } from "../hooks/useConfig";
 import { allowNavigation, shakeSaveBar } from "../lib/unsavedNavigation";
 import { useNavMenuFeatureStore, type NavItem } from "../store/features/nav-menu";
@@ -343,7 +342,6 @@ export function Frame({ children }: Props) {
 
           <div className="admin-context-stack">
             {saveBarVisible && <SaveBar />}
-            <Toast />
           </div>
         </header>
 
