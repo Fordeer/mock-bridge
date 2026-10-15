@@ -3,7 +3,7 @@
  * This mimics the real @shopify/app-bridge library for testing purposes
  */
 
-import { modal, polyfillModalOpener } from "./features/modal";
+import { listenForRelayedMessages, modal, polyfillModalOpener } from "./features/modal";
 import { saveBar } from "./features/save-bar";
 import { scopes } from "./features/scopes";
 import { config } from "./features/config";
@@ -22,6 +22,7 @@ import { app } from "./features/app";
 import { loading } from "./features/loading";
 import { navMenu } from "./features/nav-menu";
 import { titleBar } from "./features/title-bar";
+import { installLegacyV3Transport } from "./features/legacy-v3";
 
 (function (window) {
   'use strict';
@@ -34,6 +35,12 @@ import { titleBar } from "./features/title-bar";
 
   // customize-embed-* (and other src modals) need opener → main app frame.
   polyfillModalOpener();
+  // Relayed modal ⇄ app messages keep the sender's (app) origin.
+  listenForRelayedMessages();
+
+  // @shopify/app-bridge v3 (npm createApp + actions) posts to https://<host>;
+  // route it to the mock admin before app code creates its client.
+  installLegacyV3Transport();
 
   // Store for app instances
   const appInstances = new Map();
@@ -224,7 +231,7 @@ import { titleBar } from "./features/title-bar";
         if (typeof url === 'string') {
           options.headers = options.headers || {};
           if (options.headers instanceof Headers) {
-            options.headers.append('Authorization', `Bearer ${token}`);
+            options.headers.set('Authorization', `Bearer ${token}`);
           } else {
             options.headers['Authorization'] = `Bearer ${token}`;
           }
@@ -476,6 +483,12 @@ import { titleBar } from "./features/title-bar";
            url.match(/^https:\/\/[^/]+\.myshopify\.com\/admin\/api\//) !== null;
   };
 
+  const deleteHeader = (headers: Record<string, string>, name: string) => {
+    Object.keys(headers).forEach((key) => {
+      if (key.toLowerCase() === name) delete headers[key];
+    });
+  };
+
   // Override fetch to intercept Admin API requests
   const _fetch = window.fetch;
   window.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
@@ -499,8 +512,11 @@ import { titleBar } from "./features/title-bar";
       }
     }
 
-    // Add session token if available
+    // Add session token if available. Headers.forEach yields lowercase keys, so
+    // drop every casing first: two keys are merged by fetch into
+    // "Bearer a, Bearer b", which backends cannot decode.
     if (currentSessionToken) {
+      deleteHeader(headers, 'authorization');
       headers['Authorization'] = `Bearer ${currentSessionToken}`;
     }
 
@@ -539,7 +555,7 @@ import { titleBar } from "./features/title-bar";
       } else if (typeof adminApiConfig === 'object' && 'accessToken' in adminApiConfig) {
         // Make direct request to Shopify with access token
         headers['X-Shopify-Access-Token'] = adminApiConfig.accessToken;
-        delete headers['Authorization']; // Use access token instead
+        deleteHeader(headers, 'authorization'); // Use access token instead
         return _fetch(url, {
           ...options,
           headers,

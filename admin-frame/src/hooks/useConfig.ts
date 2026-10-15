@@ -9,6 +9,8 @@ interface Config {
   appUrl: string;
   appPath?: string;
   adminApi?: AdminApiConfig;
+  /** mock-bridge forwards Admin API calls to the real store (offline token stays server-side). */
+  liveAdminApi?: boolean;
   proxy?: boolean;
 }
 

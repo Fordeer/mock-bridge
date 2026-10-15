@@ -39,7 +39,7 @@ function relayOpener(): Pick<Window, 'postMessage'> {
       const origin = typeof targetOrigin === 'string' ? targetOrigin : targetOrigin?.targetOrigin ?? '*';
       try {
         window.parent.postMessage(
-          { type: 'MOCK_RELAY_TO_APP', message, targetOrigin: origin },
+          { type: 'MOCK_RELAY_TO_APP', message, targetOrigin: origin, senderOrigin: location.origin },
           '*',
         );
       } catch (error) {
@@ -56,6 +56,26 @@ function relayOpener(): Pick<Window, 'postMessage'> {
  * Same-origin (proxy): real app iframe window. Cross-origin: admin relay.
  * @see https://shopify.dev/docs/api/app-bridge/using-modals-in-your-app
  */
+/**
+ * Messages relayed by the admin (modal content ⇄ main app frame) arrive with
+ * the admin's origin, so app handlers checking `event.origin === location.origin`
+ * (opener.postMessage in production is same-origin) dropped them — e.g. a max
+ * modal's MAX_MODAL_IS_DIRTY never opened its save bar. Re-dispatch the inner
+ * message with the real sender origin. Only from the admin, only same-origin senders.
+ */
+export function listenForRelayedMessages() {
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.source !== window.parent) return;
+    const data = event.data;
+    if (!data || data.type !== 'MOCK_RELAYED_MESSAGE' || !('message' in data)) return;
+    if (data.senderOrigin !== location.origin) return;
+    window.dispatchEvent(new MessageEvent('message', {
+      data: data.message,
+      origin: data.senderOrigin,
+    }));
+  });
+}
+
 export function polyfillModalOpener() {
   if (!isModalContentFrame()) return;
 
@@ -183,7 +203,7 @@ function relayContentWindow(id: string): Pick<Window, 'postMessage'> {
       const origin = typeof targetOrigin === 'string' ? targetOrigin : targetOrigin?.targetOrigin ?? '*';
       try {
         window.parent.postMessage(
-          { type: 'MOCK_RELAY_TO_MODAL', id, message, targetOrigin: origin },
+          { type: 'MOCK_RELAY_TO_MODAL', id, message, targetOrigin: origin, senderOrigin: location.origin },
           '*',
         );
       } catch (error) {

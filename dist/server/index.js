@@ -13,6 +13,7 @@ const token_generator_1 = require("../auth/token-generator");
 const constants_1 = require("../auth/constants");
 const file_upload_1 = require("./file-upload");
 const files_query_1 = require("./files-query");
+const billing_1 = require("./billing");
 const catalog_query_1 = require("./catalog-query");
 class MockShopifyAdminServer {
     constructor(config) {
@@ -85,6 +86,12 @@ class MockShopifyAdminServer {
         }
     }
     setupRoutes() {
+        // Mock app billing: confirmation page + /mock-billing/graphql for app backends.
+        (0, billing_1.registerMockBilling)(this.app, {
+            clientId: () => this.config.clientId,
+            publicUrl: () => (process.env.MOCK_BRIDGE_PUBLIC_URL || `http://127.0.0.1:${this.config.port}`).replace(/\/$/, ''),
+            debug: () => Boolean(this.config.debug),
+        });
         // Serve logo images
         this.app.get('/logo', (req, res) => {
             res.sendFile(path_1.default.join(__dirname, '../../assets/img/mock-bridge-logo-200px.jpg'));
@@ -98,7 +105,11 @@ class MockShopifyAdminServer {
                 shop: this.config.shop,
                 appUrl: this.config.appUrl,
                 appPath: this.config.appPath,
-                adminApi: this.config.adminApi,
+                // Never send the live offline token to the browser (the admin may be
+                // public behind a tunnel): live mode is still routed through
+                // /mock-admin-api, which forwards to the store server-side.
+                adminApi: this.isLiveAdminApi() ? 'mock' : this.config.adminApi,
+                liveAdminApi: this.isLiveAdminApi(),
                 proxy: this.config.proxy,
             });
         });
@@ -155,6 +166,10 @@ class MockShopifyAdminServer {
             const { url, method, body } = req.body;
             if (this.config.debug) {
                 console.log(`[MockShopify] Admin API proxy: ${method} ${url}`);
+            }
+            const adminApi = this.config.adminApi;
+            if (adminApi && typeof adminApi === 'object' && 'accessToken' in adminApi) {
+                return this.forwardToShopify(res, adminApi.accessToken, url, method, body);
             }
             // Handle GraphQL requests
             if (url.includes('/graphql.json')) {
@@ -241,6 +256,51 @@ class MockShopifyAdminServer {
     /**
      * Handle mock GraphQL Admin API requests
      */
+    isLiveAdminApi() {
+        const adminApi = this.config.adminApi;
+        return Boolean(adminApi && typeof adminApi === 'object' && 'accessToken' in adminApi);
+    }
+    // Live shop mode: send the Admin API call to the real store with an offline
+    // access token instead of answering from mock data.
+    async forwardToShopify(res, accessToken, url, method, body) {
+        let target;
+        try {
+            // Callers send either a relative "/admin/api/..." path or a full
+            // https://<shop>/admin/api/... URL; always pin the configured shop.
+            const parsed = new URL(url, `https://${this.config.shop}`);
+            if (!parsed.pathname.startsWith('/admin/api/'))
+                throw new Error('not an Admin API path');
+            target = new URL(parsed.pathname + parsed.search, `https://${this.config.shop}`);
+        }
+        catch (error) {
+            res.status(400).json({ errors: `Invalid Admin API url: ${url}` });
+            return;
+        }
+        const httpMethod = (method || 'GET').toUpperCase();
+        const payload = body === undefined || body === null || httpMethod === 'GET'
+            ? undefined
+            : typeof body === 'string' ? body : JSON.stringify(body);
+        try {
+            const response = await fetch(target, {
+                method: httpMethod,
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-Shopify-Access-Token': accessToken,
+                },
+                body: payload,
+            });
+            if (this.config.debug) {
+                console.log(`[MockShopify] Live Admin API: ${httpMethod} ${target.pathname} -> ${response.status}`);
+            }
+            const text = await response.text();
+            res.status(response.status).type(response.headers.get('content-type') || 'application/json').send(text);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            res.status(502).json({ errors: `Live Admin API request failed: ${message}` });
+        }
+    }
     handleMockGraphQL(req, res, body) {
         const query = typeof body === 'string' ? body : body?.query || '';
         const variables = typeof body === 'string' ? {} : body?.variables ?? {};
@@ -341,9 +401,9 @@ class MockShopifyAdminServer {
      */
     handleMockRestApi(req, res, url, method) {
         // Parse the URL to determine the resource
-        const urlParts = url.split('/');
-        const resource = urlParts.find((part, i) => urlParts[i - 1]?.match(/^\d{4}-\d{2}$/) // Find part after API version
-        );
+        const urlParts = url.split('/').filter(Boolean);
+        const versionIndex = urlParts.findIndex(part => /^\d{4}-\d{2}$/.test(part) || part === 'unstable' || part === 'latest');
+        const resource = versionIndex >= 0 ? urlParts[versionIndex + 1] : undefined;
         switch (resource) {
             case 'shop.json':
                 res.json({ shop: this.mockShop });
@@ -401,6 +461,18 @@ class MockShopifyAdminServer {
                     ],
                 });
                 break;
+            case 'themes.json':
+            case 'themes':
+                res.json({
+                    themes: [
+                        {
+                            id: 123456789,
+                            name: 'Dawn',
+                            role: 'main',
+                        },
+                    ],
+                });
+                break;
             default:
                 // Return empty response for unknown resources
                 if (this.config.debug) {
@@ -418,7 +490,7 @@ class MockShopifyAdminServer {
 📍 URL: http://localhost:${this.config.port}
 🏪 Shop: ${this.config.shop}
 🔑 Client ID: ${this.config.clientId}
-🎯 App URL: ${this.config.appUrl}${this.config.proxy ? '\n🔀 Proxy: /__proxy/ -> ' + this.config.appUrl : ''}
+🎯 App URL: ${this.config.appUrl}${this.config.proxy ? '\n🔀 Proxy: /__proxy/ -> ' + this.config.appUrl : ''}${this.isLiveAdminApi() ? '\n🔴 Admin API: LIVE https://' + this.config.shop + ' (real store data)' : ''}
 ====================================
         `);
                 resolve();
