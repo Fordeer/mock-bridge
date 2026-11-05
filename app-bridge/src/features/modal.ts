@@ -283,31 +283,52 @@ function copyStyles(from: Document, to: Document) {
   }))).then(() => undefined);
 }
 
+// React marks every container it listens on (roots and portal containers) with an
+// own `_reactListening<random>` property.
+const REACT_LISTENING_PREFIX = '_reactListening';
+
+/**
+ * True when the event happened inside a container React listens on. App Bridge React
+ * portals the modal's children into a container that ends up in this shell document,
+ * so React already dispatches those events itself; forwarding them as well ran each
+ * handler twice, and a toggle (e.g. a picker card) undid itself.
+ */
+function reactDispatches(event: Event) {
+  return event.composedPath().some((node) =>
+    Object.keys(node).some((key) => key.startsWith(REACT_LISTENING_PREFIX)),
+  );
+}
+
+function forwardUnlessReactDispatches(event: Event, handlerName: string) {
+  if (reactDispatches(event)) return false;
+  return forwardReactEvent(event, handlerName);
+}
+
 function bindShellEvents(doc: Document) {
   if (doc.documentElement.hasAttribute('data-mock-modal-events')) return;
   doc.documentElement.setAttribute('data-mock-modal-events', '');
 
   doc.addEventListener('click', (event) => {
-    forwardReactEvent(event, 'onClick');
+    forwardUnlessReactDispatches(event, 'onClick');
     const target = event.target;
     if (target instanceof Element && target.closest('a[href]')) event.preventDefault();
   });
   doc.addEventListener('submit', (event) => {
     event.preventDefault();
-    forwardReactEvent(event, 'onSubmit');
+    forwardUnlessReactDispatches(event, 'onSubmit');
   });
   doc.addEventListener('input', (event) => {
-    forwardReactEvent(event, 'onInput');
-    forwardReactEvent(event, 'onChange');
+    forwardUnlessReactDispatches(event, 'onInput');
+    forwardUnlessReactDispatches(event, 'onChange');
   });
   doc.addEventListener('change', (event) => {
     const target = event.target;
     const isChoice = target instanceof HTMLSelectElement
       || (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio'));
-    if (isChoice) forwardReactEvent(event, 'onChange');
+    if (isChoice) forwardUnlessReactDispatches(event, 'onChange');
   });
-  doc.addEventListener('keydown', (event) => forwardReactEvent(event, 'onKeyDown'));
-  doc.addEventListener('keyup', (event) => forwardReactEvent(event, 'onKeyUp'));
+  doc.addEventListener('keydown', (event) => forwardUnlessReactDispatches(event, 'onKeyDown'));
+  doc.addEventListener('keyup', (event) => forwardUnlessReactDispatches(event, 'onKeyUp'));
 }
 
 /**
